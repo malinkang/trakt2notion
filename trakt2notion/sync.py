@@ -9,7 +9,7 @@ from notionhub.log import log
 class TraktSync:
     def __init__(self, config=None):
         if config:
-            self.trakt_client_id = config.get("TRAKT_CLIENT_ID")
+            self.trakt_client_id = config.get("TRAKT_CLIENT_ID", "95e9b98a7a84ddda7e4a47f909162a68293234c15ec96a0887ce9a6688e6f032")
             self.tmdb_api_key = config.get("TMDB_API_KEY")
             token_data = config.get("token")
             # ... existing token logic ...

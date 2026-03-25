@@ -11,6 +11,7 @@ class TraktSync:
         if config:
             self.trakt_client_id = config.get("TRAKT_CLIENT_ID", "95e9b98a7a84ddda7e4a47f909162a68293234c15ec96a0887ce9a6688e6f032")
             self.tmdb_api_key = config.get("TMDB_API_KEY")
+            self.tmdb_access_token = config.get("TMDB_ACCESS_TOKEN")
             token_data = config.get("token")
             # ... existing token logic ...
             if isinstance(token_data, str):
@@ -34,9 +35,10 @@ class TraktSync:
             self.trakt_client_id = os.getenv("TRAKT_CLIENT_ID")
             self.trakt_access_token = os.getenv("TRAKT_ACCESS_TOKEN")
             self.tmdb_api_key = os.getenv("TMDB_API_KEY")
+            self.tmdb_access_token = os.getenv("TMDB_ACCESS_TOKEN")
             
         self.notion_helper = NotionHelper()
-        self.tmdb_helper = TMDBHelper(self.tmdb_api_key)
+        self.tmdb_helper = TMDBHelper(api_key=self.tmdb_api_key, access_token=self.tmdb_access_token)
         self.headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',

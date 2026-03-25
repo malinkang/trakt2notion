@@ -50,9 +50,11 @@ class NotionHelper(NotionHelperBase):
             "评分": get_number(movie_data.get('rating')),
             "类型": get_select(movie_data.get('genres', [])),
             "上映日期": get_date(movie_data.get('released')),
+            "简介": get_rich_text(movie_data.get('overview', '')),
             "Trakt URL": get_url(movie_data.get('url'))
         }
-        return self.create_page(parent={"database_id": self.movie_database_id}, properties=properties)
+        icon = movie_data.get('poster_url')
+        return self.create_page(parent={"database_id": self.movie_database_id}, properties=properties, icon=icon, cover=icon)
 
     def create_show(self, show_data):
         properties = {
@@ -60,9 +62,11 @@ class NotionHelper(NotionHelperBase):
             "Trakt ID": get_number(show_data['trakt_id']),
             "年份": get_number(show_data.get('year')),
             "状态": get_select(show_data.get('status')),
+            "简介": get_rich_text(show_data.get('overview', '')),
             "Trakt URL": get_url(show_data.get('url'))
         }
-        return self.create_page(parent={"database_id": self.show_database_id}, properties=properties)
+        icon = show_data.get('poster_url')
+        return self.create_page(parent={"database_id": self.show_database_id}, properties=properties, icon=icon, cover=icon)
 
     def create_episode(self, episode_data, show_page_id):
         properties = {
@@ -71,6 +75,8 @@ class NotionHelper(NotionHelperBase):
             "剧集": get_relation([show_page_id]),
             "季": get_number(episode_data.get('season')),
             "集": get_number(episode_data.get('number')),
-            "播放日期": get_date(episode_data.get('watched_at'))
+            "播放日期": get_date(episode_data.get('watched_at')),
+            "简介": get_rich_text(episode_data.get('overview', ''))
         }
-        return self.create_page(parent={"database_id": self.episode_database_id}, properties=properties)
+        icon = episode_data.get('still_url')
+        return self.create_page(parent={"database_id": self.episode_database_id}, properties=properties, icon=icon, cover=icon)

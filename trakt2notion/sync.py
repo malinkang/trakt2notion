@@ -48,7 +48,7 @@ class TraktSync:
 
     def fetch_history(self, type='movies'):
         url = f'https://api.trakt.tv/users/me/history/{type}'
-        response = requests.get(url, headers=self.headers)
+        response = requests.get(url, headers=self.headers, timeout=15)
         if response.status_code == 200:
             return response.json()
         else:

@@ -4,7 +4,7 @@ import json
 import requests
 from trakt2notion.notion_helper import NotionHelper
 from trakt2notion.tmdb_helper import TMDBHelper
-from notionhub.log import log
+from notionhub.log import log, sync_notification
 
 class TraktSync:
     def __init__(self, config=None):
@@ -57,6 +57,7 @@ class TraktSync:
 
     def sync_movies(self):
         movies = self.fetch_history('movies')
+        created_movies = 0
         for item in movies:
             movie = item.get('movie')
             trakt_id = movie.get('ids', {}).get('trakt')
@@ -81,11 +82,18 @@ class TraktSync:
                     movie_data.update(tmdb_details)
                 
                 self.notion_helper.create_movie(movie_data)
+                created_movies += 1
             else:
                 log(f"Movie already exists: {movie.get('title')}")
+        return {
+            "total": len(movies),
+            "created": created_movies,
+        }
 
     def sync_shows(self):
         episodes = self.fetch_history('episodes')
+        created_shows = 0
+        created_episodes = 0
         for item in episodes:
             show = item.get('show')
             episode = item.get('episode')
@@ -111,6 +119,7 @@ class TraktSync:
                 if tmdb_show_details:
                     show_data.update(tmdb_show_details)
                 show_page = self.notion_helper.create_show(show_data)
+                created_shows += 1
             
             show_page_id = show_page.get('id') if isinstance(show_page, dict) else show_page
             
@@ -131,12 +140,22 @@ class TraktSync:
                     episode_data.update(tmdb_episode_details)
                 
                 self.notion_helper.create_episode(episode_data, show_page_id)
+                created_episodes += 1
+        return {
+            "total": len(episodes),
+            "shows_created": created_shows,
+            "episodes_created": created_episodes,
+        }
 
     def run(self):
         log("Starting Trakt sync...")
-        self.sync_movies()
-        self.sync_shows()
+        movie_stats = self.sync_movies()
+        show_stats = self.sync_shows()
         log("Trakt sync finished.")
+        return {
+            "movies": movie_stats,
+            "shows": show_stats,
+        }
 
 if __name__ == '__main__':
     config = None
@@ -145,5 +164,16 @@ if __name__ == '__main__':
             config = json.loads(sys.argv[1])
         except:
             pass
-    sync = TraktSync(config)
-    sync.run()
+    with sync_notification("Trakt") as notification:
+        sync = TraktSync(config)
+        stats = sync.run()
+        notification.set_summary(
+            "同步了 {movies} 条电影历史，新增 {new_movies} 部电影；"
+            "同步了 {episodes} 条剧集历史，新增 {new_shows} 部剧集，新增 {new_episodes} 集".format(
+                movies=stats["movies"]["total"],
+                new_movies=stats["movies"]["created"],
+                episodes=stats["shows"]["total"],
+                new_shows=stats["shows"]["shows_created"],
+                new_episodes=stats["shows"]["episodes_created"],
+            )
+        )

@@ -55,7 +55,7 @@ class TraktSync:
             log(f"Failed to fetch {type} history: {response.status_code}")
             return []
 
-    def sync_movies(self):
+    def sync_movies(self, progress=None):
         movies = self.fetch_history('movies')
         created_movies = 0
         for item in movies:
@@ -81,8 +81,10 @@ class TraktSync:
                 if tmdb_details:
                     movie_data.update(tmdb_details)
                 
-                self.notion_helper.create_movie(movie_data)
+                page = self.notion_helper.create_movie(movie_data)
                 created_movies += 1
+                if progress:
+                    progress.add(movie.get('title'), page_id=page.get('id'), status="已新增电影")
             else:
                 log(f"Movie already exists: {movie.get('title')}")
         return {
@@ -90,7 +92,7 @@ class TraktSync:
             "created": created_movies,
         }
 
-    def sync_shows(self):
+    def sync_shows(self, progress=None):
         episodes = self.fetch_history('episodes')
         created_shows = 0
         created_episodes = 0
@@ -120,6 +122,8 @@ class TraktSync:
                     show_data.update(tmdb_show_details)
                 show_page = self.notion_helper.create_show(show_data)
                 created_shows += 1
+                if progress:
+                    progress.add(show.get('title'), page_id=show_page.get('id'), status="已新增剧集")
             
             show_page_id = show_page.get('id') if isinstance(show_page, dict) else show_page
             
@@ -139,18 +143,26 @@ class TraktSync:
                 if tmdb_episode_details:
                     episode_data.update(tmdb_episode_details)
                 
-                self.notion_helper.create_episode(episode_data, show_page_id)
+                episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
                 created_episodes += 1
+                if progress:
+                    progress.add(
+                        f"{show.get('title')} S{episode.get('season')}E{episode.get('number')}",
+                        page_id=episode_page.get('id'),
+                        status="已新增单集",
+                    )
         return {
             "total": len(episodes),
             "shows_created": created_shows,
             "episodes_created": created_episodes,
         }
 
-    def run(self):
+    def run(self, progress=None):
         log("Starting Trakt sync...")
-        movie_stats = self.sync_movies()
-        show_stats = self.sync_shows()
+        movie_stats = self.sync_movies(progress=progress)
+        show_stats = self.sync_shows(progress=progress)
+        if progress:
+            progress.flush()
         log("Trakt sync finished.")
         return {
             "movies": movie_stats,
@@ -166,7 +178,8 @@ if __name__ == '__main__':
             pass
     with sync_notification("Trakt") as notification:
         sync = TraktSync(config)
-        stats = sync.run()
+        progress = notification.progress("同步", batch_size=10)
+        stats = sync.run(progress=progress)
         notification.set_summary(
             "同步了 {movies} 条电影历史，新增 {new_movies} 部电影；"
             "同步了 {episodes} 条剧集历史，新增 {new_shows} 部剧集，新增 {new_episodes} 集".format(

@@ -1,90 +1,136 @@
+import json
 import os
 import sys
-import json
+
 import requests
+from notionhub.log import log, sync_notification
 from trakt2notion.notion_helper import NotionHelper
 from trakt2notion.tmdb_helper import TMDBHelper
-from notionhub.log import log, sync_notification
+
+
+DEFAULT_TRAKT_CLIENT_ID = "95e9b98a7a84ddda7e4a47f909162a68293234c15ec96a0887ce9a6688e6f032"
+
 
 class TraktSync:
     def __init__(self, config=None):
-        if config:
-            self.trakt_client_id = config.get("TRAKT_CLIENT_ID", "95e9b98a7a84ddda7e4a47f909162a68293234c15ec96a0887ce9a6688e6f032")
-            self.tmdb_api_key = config.get("TMDB_API_KEY")
-            self.tmdb_access_token = config.get("TMDB_ACCESS_TOKEN")
-            token_data = config.get("token")
-            # ... existing token logic ...
-            if isinstance(token_data, str):
-                try:
-                    token_data = json.loads(token_data)
-                except:
-                    pass
-            
-            if isinstance(token_data, dict):
-                self.trakt_access_token = token_data.get("accessToken")
-            else:
-                self.trakt_access_token = os.getenv("TRAKT_ACCESS_TOKEN")
-            
-            # Setup notion env for notion_helper
-            notion_config = config.get("notion", {})
-            os.environ["NOTION_TOKEN"] = notion_config.get("access_token", "")
-            os.environ["MOVIE_DATABASE_ID"] = notion_config.get("movie_database_id", "")
-            os.environ["SHOW_DATABASE_ID"] = notion_config.get("show_database_id", "")
-            os.environ["EPISODE_DATABASE_ID"] = notion_config.get("episode_database_id", "")
-        else:
-            self.trakt_client_id = os.getenv("TRAKT_CLIENT_ID")
-            self.trakt_access_token = os.getenv("TRAKT_ACCESS_TOKEN")
-            self.tmdb_api_key = os.getenv("TMDB_API_KEY")
-            self.tmdb_access_token = os.getenv("TMDB_ACCESS_TOKEN")
-            
+        config = config or {}
+        self.trakt_client_id = self._get_config_value(config, "TRAKT_CLIENT_ID", "trakt_client_id") or os.getenv(
+            "TRAKT_CLIENT_ID"
+        ) or DEFAULT_TRAKT_CLIENT_ID
+        self.tmdb_api_key = self._get_config_value(config, "TMDB_API_KEY", "tmdb_api_key") or os.getenv("TMDB_API_KEY")
+        self.tmdb_access_token = self._get_config_value(config, "TMDB_ACCESS_TOKEN", "tmdb_access_token") or os.getenv(
+            "TMDB_ACCESS_TOKEN"
+        )
+        self.trakt_access_token = self._get_access_token(config) or os.getenv("TRAKT_ACCESS_TOKEN")
+
+        self._setup_notion_env(config.get("notion") or {})
+
         self.notion_helper = NotionHelper()
         self.tmdb_helper = TMDBHelper(api_key=self.tmdb_api_key, access_token=self.tmdb_access_token)
         self.headers = {
-            'Content-Type': 'application/json',
-            'trakt-api-version': '2',
-            'trakt-api-key': self.trakt_client_id,
-            'Authorization': f'Bearer {self.trakt_access_token}'
+            "Content-Type": "application/json",
+            "trakt-api-version": "2",
+            "trakt-api-key": self.trakt_client_id,
         }
+        if self.trakt_access_token:
+            self.headers["Authorization"] = f"Bearer {self.trakt_access_token}"
 
-    def fetch_history(self, type='movies'):
-        url = f'https://api.trakt.tv/users/me/history/{type}'
+    @staticmethod
+    def _get_config_value(config, *keys):
+        for key in keys:
+            value = config.get(key)
+            if value:
+                return value
+        return None
+
+    @staticmethod
+    def _set_env_if_value(name, value):
+        if value is not None:
+            os.environ[name] = str(value)
+
+    def _setup_notion_env(self, notion_config):
+        self._set_env_if_value("NOTION_TOKEN", notion_config.get("access_token") or notion_config.get("token"))
+        self._set_env_if_value("MOVIE_DATABASE_ID", notion_config.get("movie_database_id"))
+        self._set_env_if_value("SHOW_DATABASE_ID", notion_config.get("show_database_id"))
+        self._set_env_if_value("EPISODE_DATABASE_ID", notion_config.get("episode_database_id"))
+        self._set_env_if_value("MOVIE_DATA_SOURCE_ID", notion_config.get("movie_data_source_id"))
+        self._set_env_if_value("SHOW_DATA_SOURCE_ID", notion_config.get("show_data_source_id"))
+        self._set_env_if_value("EPISODE_DATA_SOURCE_ID", notion_config.get("episode_data_source_id"))
+        self._set_env_if_value("NOTION_PAGE", notion_config.get("duplicated_template_id") or notion_config.get("page_id"))
+
+    def _get_access_token(self, config):
+        token_data = config.get("token") or config.get("trakt") or {}
+        if isinstance(token_data, str):
+            try:
+                token_data = json.loads(token_data)
+            except Exception:
+                return token_data
+        if isinstance(token_data, dict):
+            token = (
+                token_data.get("access_token")
+                or token_data.get("accessToken")
+                or token_data.get("TRAKT_ACCESS_TOKEN")
+                or token_data.get("trakt_access_token")
+            )
+            if token:
+                return token
+        return self._get_config_value(config, "TRAKT_ACCESS_TOKEN", "trakt_access_token", "access_token", "accessToken")
+
+    @staticmethod
+    def _trakt_url(kind, slug):
+        if not slug:
+            return None
+        return f"https://trakt.tv/{kind}/{slug}"
+
+    @classmethod
+    def _episode_url(cls, show_slug, season, number):
+        show_url = cls._trakt_url("shows", show_slug)
+        if not show_url or season is None or number is None:
+            return None
+        return f"{show_url}/seasons/{season}/episodes/{number}"
+
+    def fetch_history(self, type="movies"):
+        if not self.trakt_access_token:
+            log("缺少 TRAKT_ACCESS_TOKEN，跳过 Trakt 同步")
+            return []
+        url = f"https://api.trakt.tv/users/me/history/{type}"
         response = requests.get(url, headers=self.headers, timeout=15)
         if response.status_code == 200:
             return response.json()
-        else:
-            log(f"Failed to fetch {type} history: {response.status_code}")
-            return []
+        log(f"Failed to fetch {type} history: {response.status_code} {response.text[:200]}")
+        return []
 
     def sync_movies(self, progress=None):
-        movies = self.fetch_history('movies')
+        movies = self.fetch_history("movies")
         created_movies = 0
         for item in movies:
-            movie = item.get('movie')
-            trakt_id = movie.get('ids', {}).get('trakt')
-            tmdb_id = movie.get('ids', {}).get('tmdb')
-            if not trakt_id:
+            movie = item.get("movie") or {}
+            ids = movie.get("ids") or {}
+            trakt_id = ids.get("trakt")
+            tmdb_id = ids.get("tmdb")
+            movie_url = self._trakt_url("movies", ids.get("slug"))
+            if not trakt_id and not movie_url:
                 continue
-            
-            existing_movie = self.notion_helper.get_movie_by_trakt_id(trakt_id)
+
+            existing_movie = self.notion_helper.get_movie_by_trakt_id(trakt_id, movie_url)
             if not existing_movie:
                 log(f"Creating movie: {movie.get('title')}")
                 movie_data = {
-                    'title': movie.get('title'),
-                    'trakt_id': trakt_id,
-                    'year': movie.get('year'),
-                    'watched_at': item.get('watched_at'),
-                    'url': f"https://trakt.tv/movies/{movie.get('ids', {}).get('slug')}"
+                    "title": movie.get("title"),
+                    "trakt_id": trakt_id,
+                    "year": movie.get("year"),
+                    "watched_at": item.get("watched_at"),
+                    "url": movie_url,
                 }
-                
-                # Fetch Chinese details from TMDB
+
                 tmdb_details = self.tmdb_helper.get_movie_details(tmdb_id)
                 if tmdb_details:
                     movie_data.update(tmdb_details)
-                
+
                 page = self.notion_helper.create_movie(movie_data)
                 created_movies += 1
                 if progress:
-                    progress.add(movie.get('title'), page_id=page.get('id'), status="已新增电影")
+                    progress.add(movie.get("title"), page_id=page.get("id"), status="已新增电影")
             else:
                 log(f"Movie already exists: {movie.get('title')}")
         return {
@@ -93,62 +139,65 @@ class TraktSync:
         }
 
     def sync_shows(self, progress=None):
-        episodes = self.fetch_history('episodes')
+        episodes = self.fetch_history("episodes")
         created_shows = 0
         created_episodes = 0
         for item in episodes:
-            show = item.get('show')
-            episode = item.get('episode')
-            show_trakt_id = show.get('ids', {}).get('trakt')
-            show_tmdb_id = show.get('ids', {}).get('tmdb')
-            episode_trakt_id = episode.get('ids', {}).get('trakt')
-            
-            if not show_trakt_id or not episode_trakt_id:
+            show = item.get("show") or {}
+            episode = item.get("episode") or {}
+            show_ids = show.get("ids") or {}
+            episode_ids = episode.get("ids") or {}
+            show_trakt_id = show_ids.get("trakt")
+            show_tmdb_id = show_ids.get("tmdb")
+            episode_trakt_id = episode_ids.get("trakt")
+            show_url = self._trakt_url("shows", show_ids.get("slug"))
+            episode_url = self._episode_url(show_ids.get("slug"), episode.get("season"), episode.get("number"))
+
+            if (not show_trakt_id and not show_url) or (not episode_trakt_id and not episode_url):
                 continue
-            
-            # Ensure show exists
-            show_page = self.notion_helper.get_show_by_trakt_id(show_trakt_id)
+
+            show_page = self.notion_helper.get_show_by_trakt_id(show_trakt_id, show_url)
             if not show_page:
                 log(f"Creating show: {show.get('title')}")
                 show_data = {
-                    'title': show.get('title'),
-                    'trakt_id': show_trakt_id,
-                    'year': show.get('year'),
-                    'url': f"https://trakt.tv/shows/{show.get('ids', {}).get('slug')}"
+                    "title": show.get("title"),
+                    "trakt_id": show_trakt_id,
+                    "year": show.get("year"),
+                    "url": show_url,
                 }
-                # Fetch Chinese show details
                 tmdb_show_details = self.tmdb_helper.get_show_details(show_tmdb_id)
                 if tmdb_show_details:
                     show_data.update(tmdb_show_details)
                 show_page = self.notion_helper.create_show(show_data)
                 created_shows += 1
                 if progress:
-                    progress.add(show.get('title'), page_id=show_page.get('id'), status="已新增剧集")
-            
-            show_page_id = show_page.get('id') if isinstance(show_page, dict) else show_page
-            
-            # Ensure episode exists
-            existing_episode = self.notion_helper.get_episode_by_trakt_id(episode_trakt_id)
+                    progress.add(show.get("title"), page_id=show_page.get("id"), status="已新增剧集")
+
+            show_page_id = show_page.get("id") if isinstance(show_page, dict) else show_page
+
+            existing_episode = self.notion_helper.get_episode_by_trakt_id(episode_trakt_id, episode_url)
             if not existing_episode:
                 log(f"Creating episode: {show.get('title')} S{episode.get('season')}E{episode.get('number')}")
                 episode_data = {
-                    'title': episode.get('title'),
-                    'trakt_id': episode_trakt_id,
-                    'season': episode.get('season'),
-                    'number': episode.get('number'),
-                    'watched_at': item.get('watched_at')
+                    "title": episode.get("title"),
+                    "trakt_id": episode_trakt_id,
+                    "season": episode.get("season"),
+                    "number": episode.get("number"),
+                    "watched_at": item.get("watched_at"),
+                    "url": episode_url,
                 }
-                # Fetch Chinese episode details
-                tmdb_episode_details = self.tmdb_helper.get_episode_details(show_tmdb_id, episode.get('season'), episode.get('number'))
+                tmdb_episode_details = self.tmdb_helper.get_episode_details(
+                    show_tmdb_id, episode.get("season"), episode.get("number")
+                )
                 if tmdb_episode_details:
                     episode_data.update(tmdb_episode_details)
-                
+
                 episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
                 created_episodes += 1
                 if progress:
                     progress.add(
                         f"{show.get('title')} S{episode.get('season')}E{episode.get('number')}",
-                        page_id=episode_page.get('id'),
+                        page_id=episode_page.get("id"),
                         status="已新增单集",
                     )
         return {
@@ -169,12 +218,13 @@ class TraktSync:
             "shows": show_stats,
         }
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     config = None
     if len(sys.argv) > 1:
         try:
             config = json.loads(sys.argv[1])
-        except:
+        except Exception:
             pass
     with sync_notification("Trakt") as notification:
         sync = TraktSync(config)

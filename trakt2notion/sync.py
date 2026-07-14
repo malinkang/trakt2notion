@@ -4,6 +4,7 @@ import sys
 
 import requests
 from notionhub.log import log, sync_notification
+from notionhub.sync_policy import current_sync_policy
 from trakt2notion.notion_helper import NotionHelper
 from trakt2notion.tmdb_helper import TMDBHelper
 
@@ -22,6 +23,7 @@ class TraktSync:
             "TMDB_ACCESS_TOKEN"
         )
         self.trakt_access_token = self._get_access_token(config) or os.getenv("TRAKT_ACCESS_TOKEN")
+        self.sync_policy = current_sync_policy()
 
         self._setup_notion_env(config.get("notion") or {})
 
@@ -111,9 +113,12 @@ class TraktSync:
             movie_url = self._trakt_url("movies", ids.get("slug"))
             if not trakt_id and not movie_url:
                 continue
+            item_id = f"movie:{trakt_id or movie_url}"
 
             existing_movie = self.notion_helper.get_movie_by_trakt_id(trakt_id, movie_url)
             if not existing_movie:
+                if not self.sync_policy.can_create("history", item_id):
+                    continue
                 log(f"Creating movie: {movie.get('title')}")
                 movie_data = {
                     "title": movie.get("title"),
@@ -129,6 +134,9 @@ class TraktSync:
 
                 page = self.notion_helper.create_movie(movie_data)
                 created_movies += 1
+                self.sync_policy.record_success(
+                    "history", item_id, occurred_at=item.get("watched_at"), created=True
+                )
                 if progress:
                     progress.add(movie.get("title"), page_id=page.get("id"), status="已新增电影")
             else:
@@ -155,6 +163,7 @@ class TraktSync:
 
             if (not show_trakt_id and not show_url) or (not episode_trakt_id and not episode_url):
                 continue
+            item_id = f"episode:{episode_trakt_id or episode_url}"
 
             show_page = self.notion_helper.get_show_by_trakt_id(show_trakt_id, show_url)
             if not show_page:
@@ -177,6 +186,8 @@ class TraktSync:
 
             existing_episode = self.notion_helper.get_episode_by_trakt_id(episode_trakt_id, episode_url)
             if not existing_episode:
+                if not self.sync_policy.can_create("history", item_id):
+                    continue
                 log(f"Creating episode: {show.get('title')} S{episode.get('season')}E{episode.get('number')}")
                 episode_data = {
                     "title": episode.get("title"),
@@ -194,6 +205,9 @@ class TraktSync:
 
                 episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
                 created_episodes += 1
+                self.sync_policy.record_success(
+                    "history", item_id, occurred_at=item.get("watched_at"), created=True
+                )
                 if progress:
                     progress.add(
                         f"{show.get('title')} S{episode.get('season')}E{episode.get('number')}",
@@ -230,6 +244,7 @@ if __name__ == "__main__":
         sync = TraktSync(config)
         progress = notification.progress("同步", batch_size=10)
         stats = sync.run(progress=progress)
+        sync.sync_policy.write_report(status="success")
         notification.set_summary(
             "同步了 {movies} 条电影历史，新增 {new_movies} 部电影；"
             "同步了 {episodes} 条剧集历史，新增 {new_shows} 部剧集，新增 {new_episodes} 集".format(

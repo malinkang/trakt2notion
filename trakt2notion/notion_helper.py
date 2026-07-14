@@ -12,6 +12,7 @@ from notionhub.utils import (
     get_url,
 )
 from notionhub.log import log
+from notionhub.sync_policy import current_sync_policy
 
 
 class NotionHelper(NotionHelperBase):
@@ -22,7 +23,9 @@ class NotionHelper(NotionHelperBase):
         self.episode_database_id, self.episode_data_source_id = self._resolve_ids("EPISODE")
         self._property_types = {}
         self._image_cache = {}
-        self.upload_to_notion = str(os.getenv("UPLOAD_TO_NOTION", "false")).lower() in (
+        self.upload_to_notion = current_sync_policy().allows("media") and str(
+            os.getenv("UPLOAD_TO_NOTION", "false")
+        ).lower() in (
             "1",
             "true",
             "yes",

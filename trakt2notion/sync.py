@@ -103,6 +103,8 @@ class TraktSync:
         if response.status_code == 200:
             history = response.json()
             return history[:max_items] if max_items is not None else history
+        if response.status_code in (401, 403):
+            raise RuntimeError("Trakt 授权已过期，请重新授权后再同步。")
         log(f"读取 Trakt {type} 历史失败: HTTP {response.status_code}")
         return []
 

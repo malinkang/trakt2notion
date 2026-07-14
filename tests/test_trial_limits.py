@@ -38,6 +38,13 @@ class TraktHistoryLimitTests(unittest.TestCase):
         self.assertEqual(self.make_sync().fetch_history("movies", max_items=0), [])
         request_get.assert_not_called()
 
+    @patch("trakt2notion.sync.requests.get")
+    def test_expired_token_fails_instead_of_reporting_empty_success(self, request_get):
+        request_get.return_value = Mock(status_code=401)
+
+        with self.assertRaisesRegex(RuntimeError, "授权已过期"):
+            self.make_sync().fetch_history("movies", max_items=50)
+
 
 if __name__ == "__main__":
     unittest.main()

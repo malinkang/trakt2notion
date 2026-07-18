@@ -24,6 +24,7 @@ class TraktSync:
         )
         self.trakt_access_token = self._get_access_token(config) or os.getenv("TRAKT_ACCESS_TOKEN")
         self.sync_policy = current_sync_policy()
+        self.sync_mode = (os.getenv("SYNC_MODE") or "incremental").strip().lower()
 
         self._setup_notion_env(config.get("notion") or {})
 
@@ -91,6 +92,9 @@ class TraktSync:
             return None
         return f"{show_url}/seasons/{season}/episodes/{number}"
 
+    def is_full_sync(self):
+        return self.sync_mode == "full"
+
     def fetch_history(self, type="movies", max_items=None):
         if not self.trakt_access_token:
             log("缺少 TRAKT_ACCESS_TOKEN，跳过 Trakt 同步")
@@ -98,15 +102,33 @@ class TraktSync:
         if max_items is not None and max_items <= 0:
             return []
         url = f"https://api.trakt.tv/users/me/history/{type}"
-        params = {"limit": min(100, max_items)} if max_items is not None else None
-        response = requests.get(url, headers=self.headers, params=params, timeout=15)
-        if response.status_code == 200:
-            history = response.json()
-            return history[:max_items] if max_items is not None else history
-        if response.status_code in (401, 403):
-            raise RuntimeError("Trakt 授权已过期，请重新授权后再同步。")
-        log(f"读取 Trakt {type} 历史失败: HTTP {response.status_code}")
-        return []
+        per_page = min(100, max_items) if max_items is not None else 100
+        should_paginate = self.is_full_sync() and max_items is None
+        history = []
+        page = 1
+        page_count = 1
+        log(f"读取 Trakt {type} 历史：模式={'全量同步' if should_paginate else '增量同步'}")
+        while page <= page_count:
+            params = {"limit": per_page, "page": page}
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            if response.status_code == 200:
+                items = response.json() or []
+                history.extend(items)
+                if max_items is not None and len(history) >= max_items:
+                    return history[:max_items]
+                if not should_paginate:
+                    return history
+                page_count = int(response.headers.get("X-Pagination-Page-Count") or page)
+                log(f"Trakt {type} 历史读取进度：第 {page}/{page_count} 页，累计 {len(history)} 条")
+                if not items:
+                    break
+                page += 1
+                continue
+            if response.status_code in (401, 403):
+                raise RuntimeError("Trakt 授权已过期，请重新授权后再同步。")
+            log(f"读取 Trakt {type} 历史失败: HTTP {response.status_code}")
+            break
+        return history
 
     def sync_movies(self, progress=None):
         trial_fetch_limit = None
@@ -239,7 +261,7 @@ class TraktSync:
         }
 
     def run(self, progress=None):
-        log("开始同步 Trakt。")
+        log(f"开始同步 Trakt，当前模式：{'全量同步' if self.is_full_sync() else '增量同步'}。")
         movie_stats = self.sync_movies(progress=progress)
         show_stats = self.sync_shows(progress=progress)
         if progress:

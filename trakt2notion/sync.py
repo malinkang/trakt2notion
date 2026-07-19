@@ -136,6 +136,7 @@ class TraktSync:
             trial_fetch_limit = self.sync_policy.remaining("history") * 2
         movies = self.fetch_history("movies", max_items=trial_fetch_limit)
         created_movies = 0
+        updated_movies = 0
         for item in movies:
             if self.sync_policy.is_trial and self.sync_policy.remaining("history") <= 0:
                 break
@@ -149,22 +150,20 @@ class TraktSync:
             item_id = f"movie:{trakt_id or movie_url}"
 
             existing_movie = self.notion_helper.get_movie_by_trakt_id(trakt_id, movie_url)
+            movie_data = {
+                "title": movie.get("title"),
+                "trakt_id": trakt_id,
+                "year": movie.get("year"),
+                "watched_at": item.get("watched_at"),
+                "url": movie_url,
+            }
+            tmdb_details = self.tmdb_helper.get_movie_details(tmdb_id)
+            if tmdb_details:
+                movie_data.update(tmdb_details)
             if not existing_movie:
                 if not self.sync_policy.can_create("history", item_id):
                     continue
                 log(f"正在新增 Trakt 电影: {movie.get('title')}")
-                movie_data = {
-                    "title": movie.get("title"),
-                    "trakt_id": trakt_id,
-                    "year": movie.get("year"),
-                    "watched_at": item.get("watched_at"),
-                    "url": movie_url,
-                }
-
-                tmdb_details = self.tmdb_helper.get_movie_details(tmdb_id)
-                if tmdb_details:
-                    movie_data.update(tmdb_details)
-
                 page = self.notion_helper.create_movie(movie_data)
                 created_movies += 1
                 self.sync_policy.record_success(
@@ -172,11 +171,21 @@ class TraktSync:
                 )
                 if progress:
                     progress.add(movie.get("title"), page_id=page.get("id"), status="已新增电影")
+            elif self.is_full_sync():
+                log(f"正在更新 Trakt 电影: {movie.get('title')}")
+                self.notion_helper.update_movie(existing_movie.get("id"), movie_data)
+                updated_movies += 1
+                self.sync_policy.record_success(
+                    "history", item_id, occurred_at=item.get("watched_at"), created=False
+                )
+                if progress:
+                    progress.add(movie.get("title"), page_id=existing_movie.get("id"), status="已更新电影")
             else:
                 log(f"Trakt 电影已存在: {movie.get('title')}")
         return {
             "total": len(movies),
             "created": created_movies,
+            "updated": updated_movies,
         }
 
     def sync_shows(self, progress=None):
@@ -186,6 +195,8 @@ class TraktSync:
         episodes = self.fetch_history("episodes", max_items=trial_fetch_limit)
         created_shows = 0
         created_episodes = 0
+        updated_shows = 0
+        updated_episodes = 0
         for item in episodes:
             if self.sync_policy.is_trial and self.sync_policy.remaining("history") <= 0:
                 break
@@ -204,31 +215,38 @@ class TraktSync:
             item_id = f"episode:{episode_trakt_id or episode_url}"
 
             existing_episode = self.notion_helper.get_episode_by_trakt_id(episode_trakt_id, episode_url)
-            if existing_episode:
+            if existing_episode and not self.is_full_sync():
                 continue
-            if not self.sync_policy.can_create("history", item_id):
+            if not existing_episode and not self.sync_policy.can_create("history", item_id):
                 break
 
             show_page = self.notion_helper.get_show_by_trakt_id(show_trakt_id, show_url)
+            show_data = {
+                "title": show.get("title"),
+                "trakt_id": show_trakt_id,
+                "year": show.get("year"),
+                "url": show_url,
+            }
+            tmdb_show_details = self.tmdb_helper.get_show_details(show_tmdb_id)
+            if tmdb_show_details:
+                show_data.update(tmdb_show_details)
             if not show_page:
                 log(f"正在新增 Trakt 剧集: {show.get('title')}")
-                show_data = {
-                    "title": show.get("title"),
-                    "trakt_id": show_trakt_id,
-                    "year": show.get("year"),
-                    "url": show_url,
-                }
-                tmdb_show_details = self.tmdb_helper.get_show_details(show_tmdb_id)
-                if tmdb_show_details:
-                    show_data.update(tmdb_show_details)
                 show_page = self.notion_helper.create_show(show_data)
                 created_shows += 1
                 if progress:
                     progress.add(show.get("title"), page_id=show_page.get("id"), status="已新增剧集")
+            elif self.is_full_sync():
+                log(f"正在更新 Trakt 剧集: {show.get('title')}")
+                self.notion_helper.update_show(show_page.get("id"), show_data)
+                updated_shows += 1
+                if progress:
+                    progress.add(show.get("title"), page_id=show_page.get("id"), status="已更新剧集")
 
             show_page_id = show_page.get("id") if isinstance(show_page, dict) else show_page
 
-            log(f"正在新增 Trakt 单集: {show.get('title')} S{episode.get('season')}E{episode.get('number')}")
+            action = "更新" if existing_episode else "新增"
+            log(f"正在{action} Trakt 单集: {show.get('title')} S{episode.get('season')}E{episode.get('number')}")
             episode_data = {
                 "title": episode.get("title"),
                 "trakt_id": episode_trakt_id,
@@ -243,21 +261,27 @@ class TraktSync:
             if tmdb_episode_details:
                 episode_data.update(tmdb_episode_details)
 
-            episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
-            created_episodes += 1
+            if existing_episode:
+                episode_page = self.notion_helper.update_episode(existing_episode.get("id"), episode_data, show_page_id)
+                updated_episodes += 1
+            else:
+                episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
+                created_episodes += 1
             self.sync_policy.record_success(
-                "history", item_id, occurred_at=item.get("watched_at"), created=True
+                "history", item_id, occurred_at=item.get("watched_at"), created=not bool(existing_episode)
             )
             if progress:
                 progress.add(
                     f"{show.get('title')} S{episode.get('season')}E{episode.get('number')}",
-                    page_id=episode_page.get("id"),
-                    status="已新增单集",
+                    page_id=episode_page.get("id") if isinstance(episode_page, dict) else existing_episode.get("id"),
+                    status="已更新单集" if existing_episode else "已新增单集",
                 )
         return {
             "total": len(episodes),
             "shows_created": created_shows,
+            "shows_updated": updated_shows,
             "episodes_created": created_episodes,
+            "episodes_updated": updated_episodes,
         }
 
     def run(self, progress=None):
@@ -286,12 +310,16 @@ if __name__ == "__main__":
         stats = sync.run(progress=progress)
         sync.sync_policy.write_report(status="success")
         notification.set_summary(
-            "同步了 {movies} 条电影历史，新增 {new_movies} 部电影；"
-            "同步了 {episodes} 条剧集历史，新增 {new_shows} 部剧集，新增 {new_episodes} 集".format(
+            "同步了 {movies} 条电影历史，新增 {new_movies} 部电影，更新 {updated_movies} 部电影；"
+            "同步了 {episodes} 条剧集历史，新增 {new_shows} 部剧集，更新 {updated_shows} 部剧集，"
+            "新增 {new_episodes} 集，更新 {updated_episodes} 集".format(
                 movies=stats["movies"]["total"],
                 new_movies=stats["movies"]["created"],
+                updated_movies=stats["movies"].get("updated", 0),
                 episodes=stats["shows"]["total"],
                 new_shows=stats["shows"]["shows_created"],
+                updated_shows=stats["shows"].get("shows_updated", 0),
                 new_episodes=stats["shows"]["episodes_created"],
+                updated_episodes=stats["shows"].get("episodes_updated", 0),
             )
         )

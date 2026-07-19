@@ -226,6 +226,19 @@ class NotionHelper(NotionHelperBase):
         )
 
     def create_movie(self, movie_data):
+        properties, icon = self._movie_payload(movie_data)
+        return self.create_page(
+            parent=self._parent(self.movie_data_source_id, self.movie_database_id),
+            properties=properties,
+            icon=icon,
+            cover=icon,
+        )
+
+    def update_movie(self, page_id, movie_data):
+        properties, icon = self._movie_payload(movie_data)
+        return self.update_page(page_id, properties, icon=icon, cover=icon)
+
+    def _movie_payload(self, movie_data):
         raw = {
             "标题": movie_data.get("title"),
             "Trakt ID": movie_data.get("trakt_id"),
@@ -241,14 +254,22 @@ class NotionHelper(NotionHelperBase):
         }
         properties = self._build_properties(self.movie_data_source_id, self.movie_database_id, raw)
         icon = self._prepare_image_url(movie_data.get("poster_url"))
+        return properties, icon
+
+    def create_show(self, show_data):
+        properties, icon = self._show_payload(show_data)
         return self.create_page(
-            parent=self._parent(self.movie_data_source_id, self.movie_database_id),
+            parent=self._parent(self.show_data_source_id, self.show_database_id),
             properties=properties,
             icon=icon,
             cover=icon,
         )
 
-    def create_show(self, show_data):
+    def update_show(self, page_id, show_data):
+        properties, icon = self._show_payload(show_data)
+        return self.update_page(page_id, properties, icon=icon, cover=icon)
+
+    def _show_payload(self, show_data):
         raw = {
             "标题": show_data.get("title"),
             "Trakt ID": show_data.get("trakt_id"),
@@ -263,14 +284,22 @@ class NotionHelper(NotionHelperBase):
         }
         properties = self._build_properties(self.show_data_source_id, self.show_database_id, raw)
         icon = self._prepare_image_url(show_data.get("poster_url"))
+        return properties, icon
+
+    def create_episode(self, episode_data, show_page_id):
+        properties, icon = self._episode_payload(episode_data, show_page_id)
         return self.create_page(
-            parent=self._parent(self.show_data_source_id, self.show_database_id),
+            parent=self._parent(self.episode_data_source_id, self.episode_database_id),
             properties=properties,
             icon=icon,
             cover=icon,
         )
 
-    def create_episode(self, episode_data, show_page_id):
+    def update_episode(self, page_id, episode_data, show_page_id):
+        properties, icon = self._episode_payload(episode_data, show_page_id)
+        return self.update_page(page_id, properties, icon=icon, cover=icon)
+
+    def _episode_payload(self, episode_data, show_page_id):
         raw = {
             "标题": episode_data.get("title"),
             "剧集": [show_page_id],
@@ -290,9 +319,4 @@ class NotionHelper(NotionHelperBase):
             or episode_data.get("show_poster_url")
             or episode_data.get("poster_url")
         )
-        return self.create_page(
-            parent=self._parent(self.episode_data_source_id, self.episode_database_id),
-            properties=properties,
-            icon=icon,
-            cover=icon,
-        )
+        return properties, icon

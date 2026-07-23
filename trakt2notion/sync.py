@@ -97,8 +97,7 @@ class TraktSync:
 
     def fetch_history(self, type="movies", max_items=None):
         if not self.trakt_access_token:
-            log("缺少 TRAKT_ACCESS_TOKEN，跳过 Trakt 同步")
-            return []
+            raise RuntimeError("缺少 TRAKT_ACCESS_TOKEN，请重新连接 Trakt 后再同步。")
         if max_items is not None and max_items <= 0:
             return []
         url = f"https://api.trakt.tv/users/me/history/{type}"
@@ -126,8 +125,9 @@ class TraktSync:
                 continue
             if response.status_code in (401, 403):
                 raise RuntimeError("Trakt 授权已过期，请重新授权后再同步。")
-            log(f"读取 Trakt {type} 历史失败: HTTP {response.status_code}")
-            break
+            raise RuntimeError(
+                f"读取 Trakt {type} 历史失败: HTTP {response.status_code}"
+            )
         return history
 
     def sync_movies(self, progress=None):

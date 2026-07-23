@@ -62,6 +62,22 @@ class TraktHistoryLimitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "授权已过期"):
             self.make_sync().fetch_history("movies", max_items=50)
 
+    @patch("trakt2notion.sync.requests.get")
+    def test_upstream_error_fails_instead_of_returning_partial_history(
+        self, request_get
+    ):
+        request_get.return_value = Mock(status_code=503)
+
+        with self.assertRaisesRegex(RuntimeError, r"HTTP 503"):
+            self.make_sync().fetch_history("movies")
+
+    def test_missing_token_fails_instead_of_reporting_empty_success(self):
+        sync = self.make_sync()
+        sync.trakt_access_token = ""
+
+        with self.assertRaisesRegex(RuntimeError, "缺少 TRAKT_ACCESS_TOKEN"):
+            sync.fetch_history("movies")
+
     def test_full_sync_updates_existing_movie(self):
         sync = self.make_sync()
         sync.sync_mode = "full"

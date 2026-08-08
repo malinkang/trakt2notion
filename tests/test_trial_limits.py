@@ -1,10 +1,22 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from trakt2notion import sync as trakt_module
 from trakt2notion.sync import TraktSync
 
 
 class TraktHistoryLimitTests(unittest.TestCase):
+    @patch.object(trakt_module.NotionHubInternalClient, "from_env")
+    @patch.object(trakt_module.NotionHubInternalClient, "is_available", return_value=True)
+    def test_paid_sync_refreshes_snapshot_and_embed(self, _available, from_env):
+        helper = Mock(heatmap_block_id="heatmap-block")
+        from_env.return_value.public_heatmap_url.return_value = "https://i.notionhub.app/heatmap"
+
+        self.assertTrue(trakt_module.refresh_heatmap_after_sync(helper))
+
+        from_env.return_value.refresh_heatmap.assert_called_once_with("trakt", force=True)
+        helper.update_heatmap.assert_called_once_with("heatmap-block", "https://i.notionhub.app/heatmap")
+
     def make_sync(self):
         sync = TraktSync.__new__(TraktSync)
         sync.trakt_access_token = "token"
@@ -95,7 +107,9 @@ class TraktHistoryLimitTests(unittest.TestCase):
         self.assertEqual(stats["updated"], 1)
         sync.notion_helper.create_movie.assert_not_called()
         sync.notion_helper.update_movie.assert_called_once()
-        sync.sync_policy.record_success.assert_called_once_with("history", "movie:1", occurred_at="2026-01-01", created=False)
+        sync.sync_policy.record_success.assert_called_once_with(
+            "history", "movie:1", occurred_at="2026-01-01", heatmap_type="trakt", created=False
+        )
 
     def test_incremental_sync_skips_existing_movie(self):
         sync = self.make_sync()

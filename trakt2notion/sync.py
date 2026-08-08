@@ -3,6 +3,7 @@ import os
 import sys
 
 import requests
+from notionhub.internal_api import InternalApiError, NotionHubInternalClient
 from notionhub.log import log, sync_notification
 from notionhub.sync_policy import current_sync_policy
 from trakt2notion.notion_helper import NotionHelper
@@ -10,6 +11,25 @@ from trakt2notion.tmdb_helper import TMDBHelper
 
 
 DEFAULT_TRAKT_CLIENT_ID = "95e9b98a7a84ddda7e4a47f909162a68293234c15ec96a0887ce9a6688e6f032"
+
+
+def refresh_heatmap_after_sync(notion_helper=None):
+    if not NotionHubInternalClient.is_available():
+        log("内部 API 不可用，跳过 Trakt 热力图主动刷新。")
+        return False
+    try:
+        client = NotionHubInternalClient.from_env()
+        client.refresh_heatmap("trakt", force=True)
+        if notion_helper and notion_helper.heatmap_block_id:
+            notion_helper.update_heatmap(
+                notion_helper.heatmap_block_id,
+                client.public_heatmap_url({"type": "trakt", "format": "html"}),
+            )
+        log("Trakt 热力图已主动刷新。")
+        return True
+    except InternalApiError as error:
+        log(f"Trakt 热力图刷新失败，主同步结果保留: {error}")
+        return False
 
 
 class TraktSync:
@@ -167,7 +187,7 @@ class TraktSync:
                 page = self.notion_helper.create_movie(movie_data)
                 created_movies += 1
                 self.sync_policy.record_success(
-                    "history", item_id, occurred_at=item.get("watched_at"), created=True
+                    "history", item_id, occurred_at=item.get("watched_at"), heatmap_type="trakt", created=True
                 )
                 if progress:
                     progress.add(movie.get("title"), page_id=page.get("id"), status="已新增电影")
@@ -176,7 +196,7 @@ class TraktSync:
                 self.notion_helper.update_movie(existing_movie.get("id"), movie_data)
                 updated_movies += 1
                 self.sync_policy.record_success(
-                    "history", item_id, occurred_at=item.get("watched_at"), created=False
+                    "history", item_id, occurred_at=item.get("watched_at"), heatmap_type="trakt", created=False
                 )
                 if progress:
                     progress.add(movie.get("title"), page_id=existing_movie.get("id"), status="已更新电影")
@@ -268,7 +288,7 @@ class TraktSync:
                 episode_page = self.notion_helper.create_episode(episode_data, show_page_id)
                 created_episodes += 1
             self.sync_policy.record_success(
-                "history", item_id, occurred_at=item.get("watched_at"), created=not bool(existing_episode)
+                "history", item_id, occurred_at=item.get("watched_at"), heatmap_type="trakt", created=not bool(existing_episode)
             )
             if progress:
                 progress.add(
@@ -308,6 +328,8 @@ if __name__ == "__main__":
         sync = TraktSync(config)
         progress = notification.progress("同步", batch_size=10)
         stats = sync.run(progress=progress)
+        if not sync.sync_policy.is_trial:
+            refresh_heatmap_after_sync(sync.notion_helper)
         sync.sync_policy.write_report(status="success")
         notification.set_summary(
             "同步了 {movies} 条电影历史，新增 {new_movies} 部电影，更新 {updated_movies} 部电影；"

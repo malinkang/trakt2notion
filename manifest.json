@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-31T22:45:54.942901+08:00",
+  "repository": "scripts/trakt2notion",
+  "sourceRemote": "https://github.com/malinkang/trakt2notion.git",
+  "sourceHead": "efdaced1d97fb04d73faef97d0a2036fba951ee5",
+  "preservationBranch": "codex/mac-preserve-history-20261031",
+  "archiveOnly": true,
+  "productionAcceptance": "not_performed",
+  "encryption": "AES-256-GCM; 32-byte key retained outside all repositories",
+  "refCount": 9,
+  "stashCount": 0,
+  "containsIncrementalBundle": true,
+  "archives": [
+    {
+      "filename": "history.tar.gz.enc",
+      "encryptedSha256": "06a6902c087ff05446c54fa92057eaa134f3e6751a249d305b00610faabb0ed8",
+      "encryptedBytes": 3952,
+      "plaintextFilename": "history.tar.gz",
+      "plaintextSha256": "3d4797a9a0fe2914b4cc82d7f0d1e8c5cafab5fca550c1f4e3d239f0ba681c51"
+    }
+  ]
+}
